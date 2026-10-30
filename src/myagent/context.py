@@ -29,4 +29,57 @@ def maybe_compact(
     - return (compacted, record) where record has tokens_before/after,
       messages_before/after, summary
     """
-    raise NotImplementedError("H5 (Gold): implement context.maybe_compact() - see the docstring above")
+    if not messages:
+        return messages, None
+    tokens_before = estimate_tokens(messages)
+    if max_tokens <= 0 or tokens_before <= max_tokens:
+        return messages, None
+
+    # Keep the system prompt and the task, then the newest `keep_last` messages.
+    head_count = 1 if messages[0].get("role") == "system" else 0
+    if len(messages) > head_count and messages[head_count].get("role") == "user":
+        head_count += 1
+    tail_start = max(head_count, len(messages) - max(0, keep_last))
+    head = messages[:head_count]
+    middle = messages[head_count:tail_start]
+    tail = messages[tail_start:]
+    if not middle:
+        return messages, None
+
+    transcript = "\n\n".join(
+        f"{message.get('role', '?')}: {str(message.get('content', ''))[:2000]}"
+        for message in middle
+    )
+    response = model.chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You compress an agent transcript. Keep the task, decisions taken, "
+                    "files touched, errors and open TODOs. Reply with the summary only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Summarize these {len(middle)} messages:\n\n{transcript}",
+            },
+        ],
+        tools=None,
+    )
+    summary = str((response.get("message") or {}).get("content") or "").strip()
+    if not summary:
+        return messages, None
+
+    summary_message = {
+        "role": "user",
+        "content": f"[context compacted: {len(middle)} earlier messages summarized]\n{summary}",
+    }
+    compacted = head + [summary_message] + tail
+    record = {
+        "tokens_before": tokens_before,
+        "tokens_after": estimate_tokens(compacted),
+        "messages_before": len(messages),
+        "messages_after": len(compacted),
+        "summary": summary,
+    }
+    return compacted, record

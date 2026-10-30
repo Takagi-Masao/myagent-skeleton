@@ -6,7 +6,7 @@ from myagent.context import estimate_tokens, maybe_compact
 
 from .fake_model import FakeModel
 
-pytestmark = [pytest.mark.gold, pytest.mark.skip(reason="Gold: implement context.maybe_compact, then remove this line")]
+pytestmark = pytest.mark.gold
 
 
 def test_estimate_tokens_grows():

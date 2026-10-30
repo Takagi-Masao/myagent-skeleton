@@ -5,7 +5,7 @@ import pytest
 from myagent.events import JsonlLogger, read_events
 from myagent.session import resume
 
-pytestmark = [pytest.mark.silver, pytest.mark.skip(reason="Silver: implement session.resume, then remove this line")]
+pytestmark = pytest.mark.silver
 
 
 def _write_session(tmp_path, messages):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from enum import Enum
 
@@ -17,6 +18,16 @@ class StopReason(str, Enum):
     MAX_STEPS = "MaxSteps"
     MAX_COST = "MaxCost"
     MAX_SECONDS = "MaxSeconds"
+
+
+def _logged_args(raw_args: object) -> object:
+    """Decode a model's JSON argument string so the trace shows a JSON object."""
+    if isinstance(raw_args, str):
+        try:
+            return json.loads(raw_args)
+        except json.JSONDecodeError:
+            return raw_args
+    return raw_args
 
 
 class Agent:
@@ -59,7 +70,48 @@ class Agent:
         Hint: `exit_status` is `self.stop_reason.value`; the loop must set
         `self.stop_reason` to the reason returned by should_stop().
         """
-        raise NotImplementedError("H1: implement Agent.run() - see the docstring above")
+        env = detect_environment()
+        # detect_environment() reports the process cwd, but every tool runs inside
+        # config.workspace (which differs when --workspace is used). Tell the model
+        # the directory the tools actually operate in, or it writes to both.
+        env["workspace"] = str(self.config.workspace)
+        tool_names = [schema["function"]["name"] for schema in self.tools.schemas()]
+        self.messages = [
+            {"role": "system", "content": build_system_prompt(env, tool_names)},
+            {"role": "user", "content": build_instance_prompt(task, env)},
+        ]
+        self.logger.run_start(
+            task=task,
+            workspace=str(self.config.workspace),
+            model=self.config.model,
+            tools=tool_names,
+        )
+        for message in self.messages:
+            self.logger.message(message)
+
+        while True:
+            reason = self.should_stop()
+            if reason is not None:
+                self.stop_reason = reason
+                break
+            self.step()
+
+        if self.stop_reason is StopReason.SUBMIT:
+            submission = self.ctx.submission
+        elif self.stop_reason is StopReason.FINAL_ANSWER:
+            submission = self.final_text
+        else:
+            submission = self.ctx.submission or self.final_text
+
+        result = {
+            "exit_status": self.stop_reason.value if self.stop_reason else "Unknown",
+            "submission": submission,
+            "steps": self.steps,
+            "cost": round(self.cost, 6),
+            "usage": dict(self.usage),
+        }
+        self.logger.run_end(**result)
+        return result
 
     def step(self) -> None:
         """One model call, then execute every tool call in the response.
@@ -77,7 +129,45 @@ class Agent:
         7. If self.ctx.submitted: set stop_reason=SUBMIT, final_text=
            self.ctx.submission, return.
         """
-        raise NotImplementedError("H1: implement Agent.step() - see the docstring above")
+        self.steps += 1
+        response = self.model.chat(self.messages, self.tools.schemas())
+
+        self.cost += float(response.get("cost") or 0.0)
+        usage = response.get("usage") or {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            self.usage[key] += int(usage.get(key, 0) or 0)
+
+        message = response["message"]
+        self.messages.append(message)
+        self.logger.message(message)
+
+        tool_calls = response.get("tool_calls") or []
+        if not tool_calls:
+            self.stop_reason = StopReason.FINAL_ANSWER
+            self.final_text = message.get("content") or ""
+            return
+
+        for call in tool_calls:
+            call_id = call.get("id")
+            name = call.get("name")
+            raw_args = call.get("arguments")
+            self.logger.tool_call(name, _logged_args(raw_args), call_id)
+
+            result = self.tools.execute(name, raw_args, self.ctx)
+            payload = result.as_dict()
+            self.logger.tool_result(call_id, payload)
+
+            tool_message = {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(payload, ensure_ascii=False),
+            }
+            self.messages.append(tool_message)
+            self.logger.message(tool_message)
+
+        if self.ctx.submitted:
+            self.stop_reason = StopReason.SUBMIT
+            self.final_text = self.ctx.submission
 
     def should_stop(self) -> StopReason | None:
         if self.stop_reason is not None:
