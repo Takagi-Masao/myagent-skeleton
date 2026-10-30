@@ -91,14 +91,15 @@ Windows 上把 `python` 换成你实际用的解释器（`.venv\Scripts\python.e
 
 ## 4. 你真正要写的代码
 
-| 位置 | 级别 | 写什么 |
-|---|---|---|
-| `src/myagent/agent.py::step` / `run` | Bronze | 模型调用 → 工具执行 → 观察回填 → 循环 |
-| `src/myagent/tools/registry.py::execute` | Bronze | 工具分发、参数校验、异常/超时/截断 → observation |
-| `src/myagent/tools/python_tool.py::run` | Bronze | 用 `sys.executable` 跑 Python 代码/文件，超时杀进程树 |
-| `src/myagent/session.py::resume` | Silver | 从 `.jsonl` 断点恢复 |
-| `src/myagent/context.py::maybe_compact` | Gold | 上下文压缩 |
-| `src/myagent/agent.py::should_stop` | Bronze/Silver | 已经给了一个能用的版本；可以改 |
+
+| 位置                                     | 级别          | 写什么                                                |
+| ------------------------------------------ | --------------- | ------------------------------------------------------- |
+| `src/myagent/agent.py::step` / `run`     | Bronze        | 模型调用 → 工具执行 → 观察回填 → 循环              |
+| `src/myagent/tools/registry.py::execute` | Bronze        | 工具分发、参数校验、异常/超时/截断 → observation     |
+| `src/myagent/tools/python_tool.py::run`  | Bronze        | 用 `sys.executable` 跑 Python 代码/文件，超时杀进程树 |
+| `src/myagent/session.py::resume`         | Silver        | 从 `.jsonl` 断点恢复                                  |
+| `src/myagent/context.py::maybe_compact`  | Gold          | 上下文压缩                                            |
+| `src/myagent/agent.py::should_stop`      | Bronze/Silver | 已经给了一个能用的版本；可以改                        |
 
 `src/myagent/tools/shell.py` **已经给好**：Windows PowerShell 和 POSIX bash 两个后端。你只需要跑本机测试；不需要为了“跨平台”去改另一个后端。
 
